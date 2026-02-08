@@ -1,0 +1,1090 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Protocol Decoder - Decode SPI, I2C, UART, CAN frames from hex dumps and captures">
+    <meta name="theme-color" content="#18181b">
+    <title>Protocol Decoder PWA</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace']
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Lucide Icons -->
+    <script src="https://cdn.jsdelivr.net/npm/lucide@0.407.0"></script>
+    
+    <style>
+        * {
+            scrollbar-width: thin;
+            scrollbar-color: #52525b #27272a;
+        }
+        
+        *::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        
+        *::-webkit-scrollbar-track {
+            background: #27272a;
+        }
+        
+        *::-webkit-scrollbar-thumb {
+            background: #52525b;
+            border-radius: 4px;
+        }
+        
+        *::-webkit-scrollbar-thumb:hover {
+            background: #71717a;
+        }
+        
+        .terminal-header::before {
+            content: '● ● ●';
+            display: inline-block;
+            color: #f59e0b;
+            font-size: 18px;
+            letter-spacing: 4px;
+            padding-right: 12px;
+        }
+        
+        .waveform-canvas {
+            background: #27272a url('data:image/svg+xml,<svg width="40" height="40" xmlns="http://www.w3.org/2000/svg"><rect width="40" height="40" fill="%2327272a"/><path d="M0 20 L40 20 M20 0 L20 40" stroke="%233f3f46" stroke-width="0.5"/></svg>');
+            border-radius: 8px;
+        }
+        
+        .frame-item {
+            animation: slideIn 0.3s ease-out;
+        }
+        
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        .hex-input:focus {
+            box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.1);
+        }
+        
+        .protocol-tab {
+            position: relative;
+            border-bottom: 2px solid transparent;
+            transition: all 0.3s ease;
+        }
+        
+        .protocol-tab.active {
+            border-bottom-color: #f59e0b;
+            color: #f59e0b;
+        }
+        
+        .bit-cell {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 32px;
+            height: 32px;
+            margin: 2px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        
+        .bit-cell:hover {
+            transform: scale(1.1);
+        }
+        
+        .bit-0 {
+            background-color: #3f3f46;
+            color: #a1a1a8;
+        }
+        
+        .bit-1 {
+            background-color: #f59e0b;
+            color: #18181b;
+        }
+        
+        .bit-clock {
+            background-color: #3b82f6;
+            color: #ffffff;
+        }
+        
+        .bit-start {
+            background-color: #10b981;
+            color: #ffffff;
+        }
+        
+        .bit-stop {
+            background-color: #ef4444;
+            color: #ffffff;
+        }
+        
+        .bit-ack {
+            background-color: #8b5cf6;
+            color: #ffffff;
+        }
+        
+        .frame-boundary {
+            border-left: 3px solid #f59e0b;
+            margin-left: 8px;
+            padding-left: 8px;
+        }
+    </style>
+</head>
+<body class="bg-zinc-950 text-zinc-100 font-sans">
+    <div class="min-h-screen flex flex-col">
+        <!-- Header -->
+        <header class="bg-zinc-900 border-b border-zinc-700 sticky top-0 z-50">
+            <div class="max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 bg-gradient-to-br from-amber-500 to-amber-600 rounded-lg flex items-center justify-center">
+                            <svg class="w-6 h-6 text-zinc-900" fill="currentColor" viewBox="0 0 24 24">
+                                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                            </svg>
+                        </div>
+                        <div>
+                            <h1 class="font-mono font-bold text-xl text-amber-500">Protocol Decoder</h1>
+                            <p class="text-zinc-400 text-xs">SPI • I2C • UART • CAN</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button onclick="toggleDarkMode()" class="p-2 hover:bg-zinc-800 rounded-lg transition-colors" title="Toggle Dark Mode">
+                            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                                <path d="M12 18C8.68 18 6 15.31 6 12s2.68-6 6-6 6 2.69 6 6-2.68 6-6 6zm0-10c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4zM13 2h-2v3h2V2zm0 15h-2v3h2v-3zM5 11H2v2h3v-2zm15 0h-3v2h3v-2zM6.3 6.71L4.21 4.62 2.8 6.03l2.09 2.09 1.41-1.41zM17.9 18.5l-1.41-1.41-2.09 2.09 1.41 1.41 2.09-2.09zM19.9 6.71l-1.41-1.41-2.09 2.09 1.41 1.41 2.09-2.09zM6.3 17.9l-2.09 2.09 1.41 1.41 2.09-2.09-1.41-1.41z"/>
+                            </svg>
+                        </button>
+                        <button onclick="exportData()" class="p-2 hover:bg-zinc-800 rounded-lg transition-colors" title="Export Data">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="flex-1">
+            <div class="max-w-7xl mx-auto px-4 py-6 sm:px-6 lg:px-8">
+                <!-- Protocol Tabs -->
+                <div class="flex flex-wrap gap-2 mb-6 border-b border-zinc-700 pb-4">
+                    <button onclick="switchProtocol('spi')" class="protocol-tab active px-4 py-2 text-sm font-mono font-semibold text-amber-500">
+                        SPI Decoder
+                    </button>
+                    <button onclick="switchProtocol('i2c')" class="protocol-tab px-4 py-2 text-sm font-mono font-semibold text-zinc-400 hover:text-amber-500">
+                        I2C Decoder
+                    </button>
+                    <button onclick="switchProtocol('uart')" class="protocol-tab px-4 py-2 text-sm font-mono font-semibold text-zinc-400 hover:text-amber-500">
+                        UART Decoder
+                    </button>
+                    <button onclick="switchProtocol('can')" class="protocol-tab px-4 py-2 text-sm font-mono font-semibold text-zinc-400 hover:text-amber-500">
+                        CAN Decoder
+                    </button>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <!-- Input Panel -->
+                    <div class="lg:col-span-1">
+                        <div class="bg-zinc-900 border border-zinc-700 rounded-lg p-5 space-y-4">
+                            <h2 class="font-mono font-bold text-amber-500 text-sm">Input Data</h2>
+                            
+                            <!-- Input Format Selection -->
+                            <div class="space-y-2">
+                                <label class="block text-xs font-semibold text-zinc-400 uppercase tracking-wide">Format</label>
+                                <div class="grid grid-cols-3 gap-2">
+                                    <button onclick="setInputFormat('hex')" class="format-btn active bg-amber-500 text-zinc-900 px-3 py-2 rounded text-xs font-mono font-bold">Hex</button>
+                                    <button onclick="setInputFormat('binary')" class="format-btn bg-zinc-800 border border-zinc-700 text-zinc-300 px-3 py-2 rounded text-xs font-mono font-bold hover:border-amber-500">Binary</button>
+                                    <button onclick="setInputFormat('csv')" class="format-btn bg-zinc-800 border border-zinc-700 text-zinc-300 px-3 py-2 rounded text-xs font-mono font-bold hover:border-amber-500">CSV</button>
+                                </div>
+                            </div>
+
+                            <!-- Protocol-specific Config -->
+                            <div id="spi-config" class="protocol-config space-y-3">
+                                <div>
+                                    <label class="block text-xs font-semibold text-zinc-400 mb-1">CPOL (Clock Polarity)</label>
+                                    <select id="cpol" class="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-xs font-mono text-zinc-100 focus:border-amber-500 focus:outline-none">
+                                        <option value="0">CPOL=0 (Clock idle low)</option>
+                                        <option value="1">CPOL=1 (Clock idle high)</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-zinc-400 mb-1">CPHA (Clock Phase)</label>
+                                    <select id="cpha" class="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-xs font-mono text-zinc-100 focus:border-amber-500 focus:outline-none">
+                                        <option value="0">CPHA=0 (Sample on leading edge)</option>
+                                        <option value="1">CPHA=1 (Sample on trailing edge)</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-zinc-400 mb-1">Bit Order</label>
+                                    <select id="bitorder" class="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-xs font-mono text-zinc-100 focus:border-amber-500 focus:outline-none">
+                                        <option value="msb">MSB First</option>
+                                        <option value="lsb">LSB First</option>
+                                    </select>
+                                </div>
+                                <button onclick="loadSPIExample()" class="w-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-amber-500 px-3 py-2 rounded text-xs font-mono font-bold transition-colors">Load Example</button>
+                            </div>
+
+                            <div id="i2c-config" class="protocol-config space-y-3 hidden">
+                                <div>
+                                    <label class="block text-xs font-semibold text-zinc-400 mb-1">Address Mode</label>
+                                    <select id="i2c-addr-mode" class="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-xs font-mono text-zinc-100 focus:border-amber-500 focus:outline-none">
+                                        <option value="7bit">7-bit</option>
+                                        <option value="10bit">10-bit</option>
+                                    </select>
+                                </div>
+                                <button onclick="loadI2CExample()" class="w-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-amber-500 px-3 py-2 rounded text-xs font-mono font-bold transition-colors">Load Example</button>
+                            </div>
+
+                            <div id="uart-config" class="protocol-config space-y-3 hidden">
+                                <div>
+                                    <label class="block text-xs font-semibold text-zinc-400 mb-1">Baud Rate</label>
+                                    <select id="baudrate" class="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-xs font-mono text-zinc-100 focus:border-amber-500 focus:outline-none">
+                                        <option value="9600">9600</option>
+                                        <option value="19200">19200</option>
+                                        <option value="38400">38400</option>
+                                        <option value="115200">115200</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-zinc-400 mb-1">Data Bits</label>
+                                    <select id="databits" class="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-xs font-mono text-zinc-100 focus:border-amber-500 focus:outline-none">
+                                        <option value="8">8</option>
+                                        <option value="7">7</option>
+                                        <option value="9">9</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-zinc-400 mb-1">Parity</label>
+                                    <select id="parity" class="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-xs font-mono text-zinc-100 focus:border-amber-500 focus:outline-none">
+                                        <option value="none">None</option>
+                                        <option value="even">Even</option>
+                                        <option value="odd">Odd</option>
+                                    </select>
+                                </div>
+                                <button onclick="loadUARTExample()" class="w-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-amber-500 px-3 py-2 rounded text-xs font-mono font-bold transition-colors">Load Example</button>
+                            </div>
+
+                            <div id="can-config" class="protocol-config space-y-3 hidden">
+                                <div>
+                                    <label class="block text-xs font-semibold text-zinc-400 mb-1">Frame Type</label>
+                                    <select id="can-frame-type" class="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-xs font-mono text-zinc-100 focus:border-amber-500 focus:outline-none">
+                                        <option value="11bit">Standard 11-bit</option>
+                                        <option value="29bit">Extended 29-bit</option>
+                                    </select>
+                                </div>
+                                <button onclick="loadCANExample()" class="w-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-amber-500 px-3 py-2 rounded text-xs font-mono font-bold transition-colors">Load Example</button>
+                            </div>
+
+                            <!-- Input Textarea -->
+                            <textarea id="inputData" placeholder="Paste hex data (e.g., A5 03 FF 01 7C) or CSV data..." class="w-full h-48 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-xs text-zinc-100 focus:border-amber-500 focus:outline-none resize-none"></textarea>
+
+                            <!-- Input Buttons -->
+                            <div class="flex gap-2">
+                                <button onclick="decodeData()" class="flex-1 bg-amber-500 hover:bg-amber-400 text-zinc-900 font-mono font-bold px-4 py-2.5 rounded-lg transition-colors">Decode</button>
+                                <button onclick="clearInput()" class="flex-1 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-300 font-mono font-bold px-4 py-2.5 rounded-lg transition-colors">Clear</button>
+                            </div>
+
+                            <!-- File Upload -->
+                            <div class="border-2 border-dashed border-zinc-700 rounded-lg p-4 text-center hover:border-amber-500 transition-colors cursor-pointer" onclick="document.getElementById('fileInput').click()">
+                                <input type="file" id="fileInput" class="hidden" accept=".hex,.bin,.csv,.txt" onchange="handleFileUpload(event)">
+                                <svg class="w-6 h-6 mx-auto text-zinc-500 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                                </svg>
+                                <p class="text-xs text-zinc-400">Upload file or click to select</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Output Panel -->
+                    <div class="lg:col-span-2 space-y-6">
+                        <!-- Statistics -->
+                        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                            <div class="bg-zinc-900 border border-zinc-700 rounded-lg p-3">
+                                <p class="text-xs text-zinc-400 font-semibold mb-1">Frames</p>
+                                <p class="font-mono font-bold text-amber-500 text-lg" id="stat-frames">0</p>
+                            </div>
+                            <div class="bg-zinc-900 border border-zinc-700 rounded-lg p-3">
+                                <p class="text-xs text-zinc-400 font-semibold mb-1">Bytes</p>
+                                <p class="font-mono font-bold text-amber-500 text-lg" id="stat-bytes">0</p>
+                            </div>
+                            <div class="bg-zinc-900 border border-zinc-700 rounded-lg p-3">
+                                <p class="text-xs text-zinc-400 font-semibold mb-1">Errors</p>
+                                <p class="font-mono font-bold text-red-500 text-lg" id="stat-errors">0</p>
+                            </div>
+                            <div class="bg-zinc-900 border border-zinc-700 rounded-lg p-3">
+                                <p class="text-xs text-zinc-400 font-semibold mb-1">Status</p>
+                                <p class="font-mono font-bold text-green-500 text-xs" id="stat-status">Ready</p>
+                            </div>
+                        </div>
+
+                        <!-- Output View Toggle -->
+                        <div class="flex gap-2 flex-wrap">
+                            <button onclick="setOutputView('frames')" id="view-frames-btn" class="view-btn active bg-amber-500 text-zinc-900 px-4 py-2 rounded-lg text-xs font-mono font-bold">Frames</button>
+                            <button onclick="setOutputView('bits')" id="view-bits-btn" class="view-btn bg-zinc-800 border border-zinc-700 text-zinc-300 px-4 py-2 rounded-lg text-xs font-mono font-bold hover:border-amber-500">Bits</button>
+                            <button onclick="setOutputView('waveform')" id="view-waveform-btn" class="view-btn bg-zinc-800 border border-zinc-700 text-zinc-300 px-4 py-2 rounded-lg text-xs font-mono font-bold hover:border-amber-500">Waveform</button>
+                            <button onclick="toggleViewFormat()" id="format-toggle-btn" class="ml-auto bg-zinc-800 border border-zinc-700 text-zinc-300 px-4 py-2 rounded-lg text-xs font-mono font-bold hover:border-amber-500">Hex View</button>
+                        </div>
+
+                        <!-- Decoded Frames -->
+                        <div id="output-frames" class="space-y-3">
+                            <div class="bg-zinc-900 border border-zinc-700 rounded-lg p-5 text-center text-zinc-400">
+                                <p class="text-sm">No data decoded yet. Enter hex/binary/CSV data and click Decode.</p>
+                            </div>
+                        </div>
+
+                        <!-- Bit View -->
+                        <div id="output-bits" class="hidden space-y-4">
+                            <div class="bg-zinc-900 border border-zinc-700 rounded-lg p-5 text-center text-zinc-400">
+                                <p class="text-sm">Bit-level visualization will appear here.</p>
+                            </div>
+                        </div>
+
+                        <!-- Waveform Canvas -->
+                        <div id="output-waveform" class="hidden">
+                            <canvas id="waveformCanvas" class="waveform-canvas w-full" height="300"></canvas>
+                            <div class="mt-2 text-xs text-zinc-400 flex justify-between px-2">
+                                <span>Scroll to zoom | Drag to pan | Hover for details</span>
+                                <button onclick="resetWaveform()" class="text-amber-500 hover:text-amber-400">Reset View</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Checksum Calculator -->
+                <div class="mt-8 bg-zinc-900 border border-zinc-700 rounded-lg p-5">
+                    <h2 class="font-mono font-bold text-amber-500 text-sm mb-4">Checksum Calculator</h2>
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                        <div>
+                            <label class="block text-xs text-zinc-400 mb-2">CRC-8</label>
+                            <div class="flex gap-2">
+                                <input type="text" id="crc8-input" placeholder="Hex bytes..." class="flex-1 bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-xs font-mono text-zinc-100 focus:border-amber-500 focus:outline-none">
+                                <button onclick="calcCRC8()" class="bg-amber-500 hover:bg-amber-400 text-zinc-900 px-3 py-2 rounded text-xs font-mono font-bold">Calc</button>
+                            </div>
+                            <p id="crc8-result" class="mt-1 text-xs font-mono text-amber-500"></p>
+                        </div>
+                        <div>
+                            <label class="block text-xs text-zinc-400 mb-2">CRC-16</label>
+                            <div class="flex gap-2">
+                                <input type="text" id="crc16-input" placeholder="Hex bytes..." class="flex-1 bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-xs font-mono text-zinc-100 focus:border-amber-500 focus:outline-none">
+                                <button onclick="calcCRC16()" class="bg-amber-500 hover:bg-amber-400 text-zinc-900 px-3 py-2 rounded text-xs font-mono font-bold">Calc</button>
+                            </div>
+                            <p id="crc16-result" class="mt-1 text-xs font-mono text-amber-500"></p>
+                        </div>
+                        <div>
+                            <label class="block text-xs text-zinc-400 mb-2">CRC-32</label>
+                            <div class="flex gap-2">
+                                <input type="text" id="crc32-input" placeholder="Hex bytes..." class="flex-1 bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-xs font-mono text-zinc-100 focus:border-amber-500 focus:outline-none">
+                                <button onclick="calcCRC32()" class="bg-amber-500 hover:bg-amber-400 text-zinc-900 px-3 py-2 rounded text-xs font-mono font-bold">Calc</button>
+                            </div>
+                            <p id="crc32-result" class="mt-1 text-xs font-mono text-amber-500"></p>
+                        </div>
+                        <div>
+                            <label class="block text-xs text-zinc-400 mb-2">XOR Checksum</label>
+                            <div class="flex gap-2">
+                                <input type="text" id="xor-input" placeholder="Hex bytes..." class="flex-1 bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-xs font-mono text-zinc-100 focus:border-amber-500 focus:outline-none">
+                                <button onclick="calcXOR()" class="bg-amber-500 hover:bg-amber-400 text-zinc-900 px-3 py-2 rounded text-xs font-mono font-bold">Calc</button>
+                            </div>
+                            <p id="xor-result" class="mt-1 text-xs font-mono text-amber-500"></p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Footer -->
+        <footer class="bg-zinc-900 border-t border-zinc-700 mt-8">
+            <div class="max-w-7xl mx-auto px-4 py-4 text-center text-xs text-zinc-500">
+                <p>Protocol Decoder PWA v1.0 | SPI • I2C • UART • CAN | Built for Hardware Debugging</p>
+            </div>
+        </footer>
+    </div>
+
+    <script>
+        // State Management
+        let state = {
+            currentProtocol: 'spi',
+            inputFormat: 'hex',
+            outputView: 'frames',
+            outputFormat: 'hex',
+            decodedFrames: [],
+            waveformZoom: 1,
+            waveformPan: 0,
+            i2cDevices: {
+                '0x50': 'EEPROM',
+                '0x68': 'RTC/IMU',
+                '0x69': 'IMU',
+                '0x48': 'Temp Sensor',
+                '0x77': 'Barometer',
+                '0x3c': 'OLED Display',
+                '0x5f': 'CCS811',
+                '0x76': 'BME280'
+            }
+        };
+
+        // ==================== Protocol Switching ====================
+        function switchProtocol(protocol) {
+            state.currentProtocol = protocol;
+            document.querySelectorAll('.protocol-tab').forEach(btn => btn.classList.remove('active', 'text-amber-500', 'border-b-amber-500'));
+            event.target.classList.add('active', 'text-amber-500', 'border-b-amber-500');
+            
+            document.querySelectorAll('.protocol-config').forEach(el => el.classList.add('hidden'));
+            document.getElementById(protocol + '-config').classList.remove('hidden');
+            
+            clearOutput();
+        }
+
+        // ==================== Input Handling ====================
+        function setInputFormat(format) {
+            state.inputFormat = format;
+            document.querySelectorAll('.format-btn').forEach(btn => {
+                btn.classList.remove('active', 'bg-amber-500', 'text-zinc-900');
+                btn.classList.add('bg-zinc-800', 'border', 'border-zinc-700', 'text-zinc-300');
+            });
+            event.target.classList.add('active', 'bg-amber-500', 'text-zinc-900');
+            event.target.classList.remove('bg-zinc-800', 'border', 'border-zinc-700', 'text-zinc-300');
+        }
+
+        function setOutputView(view) {
+            state.outputView = view;
+            document.querySelectorAll('.view-btn').forEach(btn => {
+                btn.classList.remove('active', 'bg-amber-500', 'text-zinc-900');
+                btn.classList.add('bg-zinc-800', 'border', 'border-zinc-700', 'text-zinc-300');
+            });
+            event.target.classList.add('active', 'bg-amber-500', 'text-zinc-900');
+            event.target.classList.remove('bg-zinc-800', 'border', 'border-zinc-700', 'text-zinc-300');
+            
+            document.getElementById('output-frames').classList.add('hidden');
+            document.getElementById('output-bits').classList.add('hidden');
+            document.getElementById('output-waveform').classList.add('hidden');
+            
+            if (view === 'frames') document.getElementById('output-frames').classList.remove('hidden');
+            else if (view === 'bits') document.getElementById('output-bits').classList.remove('hidden');
+            else if (view === 'waveform') {
+                document.getElementById('output-waveform').classList.remove('hidden');
+                setTimeout(() => drawWaveform(), 100);
+            }
+        }
+
+        function toggleViewFormat() {
+            state.outputFormat = state.outputFormat === 'hex' ? 'dec' : 'hex';
+            document.getElementById('format-toggle-btn').textContent = state.outputFormat === 'hex' ? 'Hex View' : 'Dec View';
+            renderFrames();
+        }
+
+        function clearInput() {
+            document.getElementById('inputData').value = '';
+        }
+
+        function clearOutput() {
+            state.decodedFrames = [];
+            document.getElementById('output-frames').innerHTML = '<div class="bg-zinc-900 border border-zinc-700 rounded-lg p-5 text-center text-zinc-400"><p class="text-sm">No data decoded yet.</p></div>';
+            document.getElementById('output-bits').innerHTML = '<div class="bg-zinc-900 border border-zinc-700 rounded-lg p-5 text-center text-zinc-400"><p class="text-sm">Bit-level visualization will appear here.</p></div>';
+            updateStats(0, 0, 0);
+        }
+
+        function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                document.getElementById('inputData').value = e.target.result;
+            };
+            reader.readAsText(file);
+        }
+
+        // ==================== Data Decoding ====================
+        function decodeData() {
+            const input = document.getElementById('inputData').value.trim();
+            if (!input) {
+                alert('Please enter data to decode');
+                return;
+            }
+
+            try {
+                state.decodedFrames = [];
+                
+                if (state.currentProtocol === 'spi') decodeSPI(input);
+                else if (state.currentProtocol === 'i2c') decodeI2C(input);
+                else if (state.currentProtocol === 'uart') decodeUART(input);
+                else if (state.currentProtocol === 'can') decodeCAN(input);
+                
+                renderFrames();
+                document.getElementById('stat-status').textContent = 'Decoded';
+            } catch (err) {
+                alert('Decode Error: ' + err.message);
+                document.getElementById('stat-status').textContent = 'Error';
+            }
+        }
+
+        // ==================== SPI Decoder ====================
+        function decodeSPI(input) {
+            const bytes = parseHexInput(input);
+            if (bytes.length === 0) throw new Error('No valid hex data');
+            
+            const cpol = parseInt(document.getElementById('cpol').value);
+            const cpha = parseInt(document.getElementById('cpha').value);
+            const bitOrder = document.getElementById('bitorder').value;
+            
+            let frameNum = 0;
+            for (let i = 0; i < bytes.length; i += 2) {
+                frameNum++;
+                const mosi = bytes[i] !== undefined ? bytes[i] : 0x00;
+                const miso = bytes[i + 1] !== undefined ? bytes[i + 1] : 0x00;
+                
+                state.decodedFrames.push({
+                    type: 'spi',
+                    frameNum,
+                    timestamp: i * 0.1,
+                    mosi: mosi,
+                    miso: miso,
+                    cpol,
+                    cpha,
+                    bitOrder,
+                    bits: getBitArray(mosi)
+                });
+            }
+            
+            updateStats(state.decodedFrames.length, bytes.length, 0);
+        }
+
+        // ==================== I2C Decoder ====================
+        function decodeI2C(input) {
+            const bytes = parseHexInput(input);
+            if (bytes.length === 0) throw new Error('No valid hex data');
+            
+            const addrMode = document.getElementById('i2c-addr-mode').value;
+            const isExtended = addrMode === '10bit';
+            
+            let frameNum = 0;
+            let i = 0;
+            
+            while (i < bytes.length) {
+                frameNum++;
+                const byte = bytes[i];
+                
+                // Parse I2C frame
+                let rwBit = byte & 0x01;
+                let address = isExtended ? ((byte << 8) | bytes[i + 1]) & (isExtended ? 0x3FF : 0x7F) : (byte >> 1) & 0x7F;
+                let ackBit = i + 1 < bytes.length ? !(bytes[i + 1] & 0x80) : false;
+                
+                let dataBytes = [];
+                let j = i + 1;
+                while (j < bytes.length && !(bytes[j] & 0xC0)) {
+                    dataBytes.push(bytes[j]);
+                    j++;
+                }
+                
+                const deviceName = state.i2cDevices['0x' + address.toString(16).toUpperCase().padStart(2, '0')] || 'Unknown';
+                
+                state.decodedFrames.push({
+                    type: 'i2c',
+                    frameNum,
+                    timestamp: i * 0.1,
+                    address: address,
+                    rwBit: rwBit ? 'Read' : 'Write',
+                    ackBit: ackBit ? 'ACK' : 'NACK',
+                    dataBytes: dataBytes,
+                    deviceName: deviceName,
+                    bits: getBitArray(byte)
+                });
+                
+                i = j + 1;
+            }
+            
+            updateStats(state.decodedFrames.length, bytes.length, 0);
+        }
+
+        // ==================== UART Decoder ====================
+        function decodeUART(input) {
+            const bytes = parseHexInput(input);
+            if (bytes.length === 0) throw new Error('No valid hex data');
+            
+            const baudrate = parseInt(document.getElementById('baudrate').value);
+            const dataBits = parseInt(document.getElementById('databits').value);
+            const parity = document.getElementById('parity').value;
+            
+            let frameNum = 0;
+            let errors = 0;
+            
+            for (let i = 0; i < bytes.length; i++) {
+                frameNum++;
+                const byte = bytes[i];
+                
+                // Check parity
+                let parityError = false;
+                if (parity !== 'none') {
+                    const bitCount = (byte.toString(2).match(/1/g) || []).length;
+                    if (parity === 'even' && bitCount % 2 !== 0) parityError = true;
+                    if (parity === 'odd' && bitCount % 2 === 0) parityError = true;
+                }
+                
+                if (parityError) errors++;
+                
+                state.decodedFrames.push({
+                    type: 'uart',
+                    frameNum,
+                    timestamp: i * (1000000 / baudrate),
+                    byte: byte,
+                    ascii: byte >= 32 && byte < 127 ? String.fromCharCode(byte) : '.',
+                    hex: byte.toString(16).toUpperCase().padStart(2, '0'),
+                    dec: byte,
+                    parity: parity,
+                    parityError: parityError,
+                    bits: getBitArray(byte)
+                });
+            }
+            
+            updateStats(state.decodedFrames.length, bytes.length, errors);
+        }
+
+        // ==================== CAN Decoder ====================
+        function decodeCAN(input) {
+            const bytes = parseHexInput(input);
+            if (bytes.length === 0) throw new Error('No valid hex data');
+            
+            const frameType = document.getElementById('can-frame-type').value;
+            const isExtended = frameType === '29bit';
+            
+            let frameNum = 0;
+            let i = 0;
+            
+            while (i < bytes.length) {
+                frameNum++;
+                
+                // Parse CAN frame (simplified)
+                let canId, dlc, data = [];
+                
+                if (isExtended && i + 4 < bytes.length) {
+                    canId = (bytes[i] << 24) | (bytes[i + 1] << 16) | (bytes[i + 2] << 8) | bytes[i + 3];
+                    canId &= 0x1FFFFFFF;
+                    dlc = bytes[i + 4] & 0x0F;
+                    i += 5;
+                } else if (i + 2 < bytes.length) {
+                    canId = (bytes[i] << 8) | bytes[i + 1];
+                    canId &= 0x7FF;
+                    dlc = bytes[i + 2] & 0x0F;
+                    i += 3;
+                } else {
+                    break;
+                }
+                
+                for (let j = 0; j < Math.min(dlc, 8); j++) {
+                    if (i < bytes.length) {
+                        data.push(bytes[i]);
+                        i++;
+                    }
+                }
+                
+                state.decodedFrames.push({
+                    type: 'can',
+                    frameNum,
+                    timestamp: frameNum * 0.1,
+                    canId: canId,
+                    dlc: dlc,
+                    data: data,
+                    isExtended: isExtended,
+                    bits: getBitArray(canId)
+                });
+            }
+            
+            updateStats(state.decodedFrames.length, bytes.length, 0);
+        }
+
+        // ==================== Utility Functions ====================
+        function parseHexInput(input) {
+            // Remove common separators
+            const cleaned = input.replace(/[\s\-:,]/g, '').toUpperCase();
+            const bytes = [];
+            
+            for (let i = 0; i < cleaned.length; i += 2) {
+                const hex = cleaned.substr(i, 2);
+                if (!/^[0-9A-F]{2}$/.test(hex)) continue;
+                bytes.push(parseInt(hex, 16));
+            }
+            
+            return bytes;
+        }
+
+        function getBitArray(byte) {
+            const bits = [];
+            for (let i = 7; i >= 0; i--) {
+                bits.push((byte >> i) & 1);
+            }
+            return bits;
+        }
+
+        function updateStats(frames, bytes, errors) {
+            document.getElementById('stat-frames').textContent = frames;
+            document.getElementById('stat-bytes').textContent = bytes;
+            document.getElementById('stat-errors').textContent = errors;
+        }
+
+        // ==================== Rendering ====================
+        function renderFrames() {
+            const container = document.getElementById('output-frames');
+            
+            if (state.decodedFrames.length === 0) {
+                container.innerHTML = '<div class="bg-zinc-900 border border-zinc-700 rounded-lg p-5 text-center text-zinc-400"><p class="text-sm">No frames decoded.</p></div>';
+                return;
+            }
+            
+            let html = '<div class="space-y-3">';
+            
+            for (const frame of state.decodedFrames) {
+                html += renderFrame(frame);
+            }
+            
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        function renderFrame(frame) {
+            let html = '<div class="frame-item bg-zinc-900 border border-zinc-700 rounded-lg p-4 hover:border-amber-500 transition-colors">';
+            
+            if (frame.type === 'spi') {
+                html += `
+                    <div class="flex justify-between items-start mb-3">
+                        <div>
+                            <p class="font-mono font-bold text-amber-500">Frame ${frame.frameNum}</p>
+                            <p class="text-xs text-zinc-400">SPI • ${frame.timestamp.toFixed(2)}µs</p>
+                        </div>
+                        <button onclick="copyToClipboard('${frame.mosi.toString(16).toUpperCase().padStart(2, '0')}')" class="text-zinc-500 hover:text-amber-500 text-xs">📋</button>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2 text-xs font-mono">
+                        <div class="bg-zinc-800 rounded p-2">
+                            <p class="text-zinc-400">MOSI</p>
+                            <p class="text-amber-500 font-bold">${formatValue(frame.mosi)}</p>
+                        </div>
+                        <div class="bg-zinc-800 rounded p-2">
+                            <p class="text-zinc-400">MISO</p>
+                            <p class="text-amber-500 font-bold">${formatValue(frame.miso)}</p>
+                        </div>
+                    </div>
+                    <div class="mt-2 flex gap-1 flex-wrap">
+                        ${frame.bits.map(b => `<div class="bit-cell ${b ? 'bit-1' : 'bit-0'}">${b}</div>`).join('')}
+                    </div>
+                `;
+            } else if (frame.type === 'i2c') {
+                html += `
+                    <div class="flex justify-between items-start mb-3">
+                        <div>
+                            <p class="font-mono font-bold text-amber-500">Frame ${frame.frameNum}</p>
+                            <p class="text-xs text-zinc-400">I2C • ${frame.timestamp.toFixed(2)}µs • ${frame.deviceName}</p>
+                        </div>
+                        <button onclick="copyToClipboard('0x${frame.address.toString(16).toUpperCase().padStart(2, '0')}')" class="text-zinc-500 hover:text-amber-500 text-xs">📋</button>
+                    </div>
+                    <div class="grid grid-cols-3 gap-2 text-xs font-mono">
+                        <div class="bg-zinc-800 rounded p-2">
+                            <p class="text-zinc-400">Address</p>
+                            <p class="text-blue-400 font-bold">0x${frame.address.toString(16).toUpperCase().padStart(2, '0')}</p>
+                        </div>
+                        <div class="bg-zinc-800 rounded p-2">
+                            <p class="text-zinc-400">Direction</p>
+                            <p class="text-green-400 font-bold">${frame.rwBit}</p>
+                        </div>
+                        <div class="bg-zinc-800 rounded p-2">
+                            <p class="text-zinc-400">ACK</p>
+                            <p class="text-${frame.ackBit === 'ACK' ? 'green' : 'red'}-400 font-bold">${frame.ackBit}</p>
+                        </div>
+                    </div>
+                    ${frame.dataBytes.length > 0 ? `<p class="mt-2 text-xs text-zinc-400">Data: <span class="text-zinc-200 font-mono">${frame.dataBytes.map(b => b.toString(16).toUpperCase().padStart(2, '0')).join(' ')}</span></p>` : ''}
+                `;
+            } else if (frame.type === 'uart') {
+                html += `
+                    <div class="flex justify-between items-start mb-3">
+                        <div>
+                            <p class="font-mono font-bold text-amber-500">Frame ${frame.frameNum}</p>
+                            <p class="text-xs text-zinc-400">UART • ${frame.timestamp.toFixed(2)}µs ${frame.parityError ? '• ⚠️ Parity Error' : ''}</p>
+                        </div>
+                        <button onclick="copyToClipboard('${frame.hex}')" class="text-zinc-500 hover:text-amber-500 text-xs">📋</button>
+                    </div>
+                    <div class="grid grid-cols-4 gap-2 text-xs font-mono">
+                        <div class="bg-zinc-800 rounded p-2">
+                            <p class="text-zinc-400">Hex</p>
+                            <p class="text-amber-500 font-bold">${frame.hex}</p>
+                        </div>
+                        <div class="bg-zinc-800 rounded p-2">
+                            <p class="text-zinc-400">Dec</p>
+                            <p class="text-amber-500 font-bold">${frame.dec}</p>
+                        </div>
+                        <div class="bg-zinc-800 rounded p-2">
+                            <p class="text-zinc-400">ASCII</p>
+                            <p class="text-amber-500 font-bold">${frame.ascii}</p>
+                        </div>
+                        <div class="bg-zinc-800 rounded p-2">
+                            <p class="text-zinc-400">Binary</p>
+                            <p class="text-amber-500 font-bold text-xs">${frame.byte.toString(2).padStart(8, '0')}</p>
+                        </div>
+                    </div>
+                `;
+            } else if (frame.type === 'can') {
+                html += `
+                    <div class="flex justify-between items-start mb-3">
+                        <div>
+                            <p class="font-mono font-bold text-amber-500">Frame ${frame.frameNum}</p>
+                            <p class="text-xs text-zinc-400">CAN ${frame.isExtended ? '(Extended 29-bit)' : '(Standard 11-bit)'} • ${frame.timestamp.toFixed(2)}µs</p>
+                        </div>
+                        <button onclick="copyToClipboard('0x${frame.canId.toString(16).toUpperCase().padStart(frame.isExtended ? 8 : 3, '0')}')" class="text-zinc-500 hover:text-amber-500 text-xs">📋</button>
+                    </div>
+                    <div class="grid grid-cols-3 gap-2 text-xs font-mono">
+                        <div class="bg-zinc-800 rounded p-2">
+                            <p class="text-zinc-400">ID</p>
+                            <p class="text-blue-400 font-bold">0x${frame.canId.toString(16).toUpperCase().padStart(frame.isExtended ? 8 : 3, '0')}</p>
+                        </div>
+                        <div class="bg-zinc-800 rounded p-2">
+                            <p class="text-zinc-400">DLC</p>
+                            <p class="text-green-400 font-bold">${frame.dlc}</p>
+                        </div>
+                        <div class="bg-zinc-800 rounded p-2">
+                            <p class="text-zinc-400">Bytes</p>
+                            <p class="text-amber-500 font-bold">${frame.data.length}</p>
+                        </div>
+                    </div>
+                    <p class="mt-2 text-xs text-zinc-400">Data: <span class="text-zinc-200 font-mono">${frame.data.map(b => b.toString(16).toUpperCase().padStart(2, '0')).join(' ')}</span></p>
+                `;
+            }
+            
+            html += '</div>';
+            return html;
+        }
+
+        function formatValue(value) {
+            if (state.outputFormat === 'hex') {
+                return '0x' + value.toString(16).toUpperCase().padStart(2, '0');
+            } else if (state.outputFormat === 'dec') {
+                return value.toString();
+            }
+            return value.toString(2).padStart(8, '0');
+        }
+
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                alert('Copied: ' + text);
+            });
+        }
+
+        // ==================== Waveform Drawing ====================
+        function drawWaveform() {
+            const canvas = document.getElementById('waveformCanvas');
+            if (!canvas) return;
+            
+            const ctx = canvas.getContext('2d');
+            const width = canvas.offsetWidth;
+            const height = canvas.offsetHeight;
+            canvas.width = width;
+            canvas.height = height;
+            
+            if (state.decodedFrames.length === 0) return;
+            
+            ctx.fillStyle = '#27272a';
+            ctx.fillRect(0, 0, width, height);
+            
+            // Draw grid
+            ctx.strokeStyle = '#3f3f46';
+            ctx.lineWidth = 0.5;
+            for (let i = 0; i < width; i += 40) {
+                ctx.beginPath();
+                ctx.moveTo(i, 0);
+                ctx.lineTo(i, height);
+                ctx.stroke();
+            }
+            
+            // Draw data lines
+            const lineHeight = height / (state.decodedFrames.length || 1);
+            ctx.strokeStyle = '#f59e0b';
+            ctx.lineWidth = 2;
+            
+            for (let i = 0; i < state.decodedFrames.length; i++) {
+                const frame = state.decodedFrames[i];
+                const y = 20 + i * lineHeight;
+                const value = frame.byte || frame.mosi || frame.canId || 0;
+                const x = 20 + (value / 255) * (width - 40);
+                
+                ctx.beginPath();
+                ctx.arc(x, y, 3, 0, 2 * Math.PI);
+                ctx.fillStyle = '#f59e0b';
+                ctx.fill();
+            }
+            
+            // Draw timeline
+            ctx.strokeStyle = '#52525b';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(20, height - 20);
+            ctx.lineTo(width - 20, height - 20);
+            ctx.stroke();
+            
+            ctx.fillStyle = '#a1a1a8';
+            ctx.font = '12px JetBrains Mono';
+            for (let i = 0; i <= 10; i++) {
+                const x = 20 + (width - 40) * (i / 10);
+                ctx.fillText((i * 10).toString(), x - 5, height - 5);
+            }
+        }
+
+        function resetWaveform() {
+            state.waveformZoom = 1;
+            state.waveformPan = 0;
+            drawWaveform();
+        }
+
+        // ==================== Checksum Calculators ====================
+        function calcCRC8() {
+            const input = document.getElementById('crc8-input').value;
+            const bytes = parseHexInput(input);
+            let crc = 0;
+            
+            for (const byte of bytes) {
+                crc ^= byte;
+                for (let i = 0; i < 8; i++) {
+                    crc = (crc << 1) ^ (((crc & 0x80) ? 0x07 : 0x00));
+                }
+            }
+            
+            document.getElementById('crc8-result').textContent = '0x' + (crc & 0xFF).toString(16).toUpperCase().padStart(2, '0');
+        }
+
+        function calcCRC16() {
+            const input = document.getElementById('crc16-input').value;
+            const bytes = parseHexInput(input);
+            let crc = 0xFFFF;
+            
+            for (const byte of bytes) {
+                crc ^= byte;
+                for (let i = 0; i < 8; i++) {
+                    crc = (crc >> 1) ^ ((crc & 1) ? 0xA001 : 0x0000);
+                }
+            }
+            
+            document.getElementById('crc16-result').textContent = '0x' + crc.toString(16).toUpperCase().padStart(4, '0');
+        }
+
+        function calcCRC32() {
+            const input = document.getElementById('crc32-input').value;
+            const bytes = parseHexInput(input);
+            let crc = 0xFFFFFFFF;
+            
+            for (const byte of bytes) {
+                crc ^= byte;
+                for (let i = 0; i < 8; i++) {
+                    crc = (crc >>> 1) ^ ((crc & 1) ? 0xEDB88320 : 0x00000000);
+                }
+            }
+            
+            document.getElementById('crc32-result').textContent = '0x' + (crc ^ 0xFFFFFFFF).toString(16).toUpperCase().padStart(8, '0');
+        }
+
+        function calcXOR() {
+            const input = document.getElementById('xor-input').value;
+            const bytes = parseHexInput(input);
+            let xor = 0;
+            
+            for (const byte of bytes) {
+                xor ^= byte;
+            }
+            
+            document.getElementById('xor-result').textContent = '0x' + xor.toString(16).toUpperCase().padStart(2, '0');
+        }
+
+        // ==================== Example Data ====================
+        function loadSPIExample() {
+            document.getElementById('inputData').value = 'A5 03 FF 01 7C 42 13 E8 A0 55 2C B3';
+            document.getElementById('stat-status').textContent = 'Example loaded';
+        }
+
+        function loadI2CExample() {
+            document.getElementById('inputData').value = '50 FF 42 AA 68 C0 3E 09 2A';
+            document.getElementById('stat-status').textContent = 'Example loaded';
+        }
+
+        function loadUARTExample() {
+            document.getElementById('inputData').value = '48 65 6C 6C 6F 20 57 6F 72 6C 64';
+            document.getElementById('stat-status').textContent = 'Example loaded';
+        }
+
+        function loadCANExample() {
+            document.getElementById('inputData').value = '12 34 08 DE AD BE EF CA FE';
+            document.getElementById('stat-status').textContent = 'Example loaded';
+        }
+
+        // ==================== Export ====================
+        function exportData() {
+            if (state.decodedFrames.length === 0) {
+                alert('No data to export');
+                return;
+            }
+            
+            const json = JSON.stringify(state.decodedFrames, null, 2);
+            const blob = new Blob([json], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `protocol-decoder-${new Date().toISOString().slice(0,10)}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        // ==================== PWA Setup ====================
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('data:application/javascript;base64,Y2xhc3MgU2VydmljZVdvcmtlckV2ZW50VGFyZ2V0IHsgYWRkRXZlbnRMaXN0ZW5lcigpIHt9IH0KbGV0IFNlcnZpY2VXb3JrZXI7YgpzZWxmLmFkZEV2ZW50TGlzdGVuZXIoJ2luc3RhbGwnLCBldmVudCA9PiBleWVudC53YWl0VW50aWwoUHJvbWlzZS5yZXNvbHZlKCkpKTsKc2VsZi5hZGRFdmVudExpc3RlbmVyKCdhY3RpdmF0ZScsIGV2ZW50ID0+IGV2ZW50LndhaXRVbnRpbChQcm9taXNlLnJlc29sdmUoKSkpOwpzZWxmLmFkZEV2ZW50TGlzdGVuZXIoJ2ZldGNoJywgZXZlbnQgPT4ge1wgZXZlbnQucmVzcG9uZFdpdGgoY2FjaGVzLm1hdGNoKGV2ZW50LnJlcXVlc3QpLnRoZW4ocmVzcCA9PiByZXNwIHx8IGZldGNoKGV2ZW50LnJlcXVlc3QpKSk7IH0pOw==').catch(() => {});
+        }
+
+        // ==================== Theme Toggle ====================
+        function toggleDarkMode() {
+            document.documentElement.classList.toggle('dark');
+        }
+
+        // ==================== Initial Setup ====================
+        window.addEventListener('load', () => {
+            document.getElementById('stat-status').textContent = 'Ready';
+        });
+
+        // Make functions available globally
+        window.decodeData = decodeData;
+        window.switchProtocol = switchProtocol;
+        window.setInputFormat = setInputFormat;
+        window.setOutputView = setOutputView;
+        window.toggleViewFormat = toggleViewFormat;
+        window.clearInput = clearInput;
+        window.handleFileUpload = handleFileUpload;
+        window.copyToClipboard = copyToClipboard;
+        window.resetWaveform = resetWaveform;
+        window.exportData = exportData;
+        window.loadSPIExample = loadSPIExample;
+        window.loadI2CExample = loadI2CExample;
+        window.loadUARTExample = loadUARTExample;
+        window.loadCANExample = loadCANExample;
+        window.toggleDarkMode = toggleDarkMode;
+        window.drawWaveform = drawWaveform;
+        window.calcCRC8 = calcCRC8;
+        window.calcCRC16 = calcCRC16;
+        window.calcCRC32 = calcCRC32;
+        window.calcXOR = calcXOR;
+    </script>
+</body>
+</html>
